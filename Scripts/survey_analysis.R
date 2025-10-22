@@ -25,6 +25,9 @@ HAB_FREQ_OTHER <- "28. You selected \"Other regular time period\". Please specif
 BIO_FREQ <- "55. How frequently is biodiversity monitoring conducted/updated?"
 BIO_FREQ_OTHER <- "56. You selected \"Other regular time period\". Please specify."
 
+HAB_RESPONSIBLE <- "22. Who is responsible for habitat monitoring?"
+BIO_RESPONSIBLE <- "50. Who is responsible for monitoring the biodiversity?"
+
 OUTDIR <- "output"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
@@ -37,7 +40,7 @@ names(raw) <- names(raw) |>
   stringr::str_trim()
 # Prevent hidden errors
 needed <- c(SECTOR_COL, HABITAT_MON, BIO_MON, PLAN_HAB, PLAN_BIO,
-            HAB_FREQ, HAB_FREQ_OTHER, BIO_FREQ, BIO_FREQ_OTHER)
+            HAB_FREQ, HAB_FREQ_OTHER, BIO_FREQ, BIO_FREQ_OTHER, HAB_RESPONSIBLE, BIO_RESPONSIBLE)
 missing <- setdiff(needed, names(raw))
 if (length(missing)) {
   stop("These columns were not found (after normalising headers):\n",
@@ -45,7 +48,14 @@ if (length(missing)) {
 }
 
 # Filter Railway respondents 
-d <- raw %>% dplyr::filter(.data[[SECTOR_COL]] == SECTOR_VALUE)
+d <- raw %>%
+  mutate(
+    .sector_norm = stringr::str_to_lower(
+      stringr::str_trim(stringr::str_replace_all(.data[[SECTOR_COL]], "\\s+", " "))
+    )
+  ) %>%
+  filter(stringr::str_detect(.sector_norm, "\\brailway\\b")) %>%  # keep any that include 'railway'
+  select(-.sector_norm)
 
 n_rail <- nrow(d)
 message("N railway respondents: ", n_rail)
@@ -151,7 +161,39 @@ save_csv(freq_combined,        "freq_combined.csv")
 save_csv(freq_hab_combined,    "freq_hab_combined.csv")
 save_csv(freq_bio_combined,    "freq_bio_combined.csv")
 
+# Internal or External monitoring
+summarise_responsible <- function(df, mon_col, resp_col, label) {
+  
+  df_yes <- df %>% filter(yn_true(.data[[mon_col]]))
+  
+  if (nrow(df_yes) == 0) {
+    return(tibble(domain = label, responsible = "no data", n = 0, pct = 0))
+  }
+  
+  summary_tbl <- df_yes %>%
+    transmute(responsible = clean_text(.data[[resp_col]])) %>%
+    mutate(responsible = dplyr::case_when(
+      stringr::str_detect(responsible, "internal|in[- ]?house") ~ "In-house",
+      stringr::str_detect(responsible, "external|consultant|third[- ]?party|outsourced") ~ "External consultant",
+      stringr::str_detect(responsible, "both") ~ "Both in-house and external",
+      is.na(responsible) | responsible == "" ~ "Missing / not specified",
+      TRUE ~ stringr::str_to_sentence(responsible)
+    )) %>%
+    count(responsible, name = "n") %>%
+    mutate(
+      pct = round(100 * n / sum(n), 1),
+      domain = label
+    ) %>%
+    select(domain, responsible, n, pct)
+  
+  return(summary_tbl)
+}
 
+resp_hab <- summarise_responsible(d, HABITAT_MON, HAB_RESPONSIBLE, "Habitat")
+resp_bio <- summarise_responsible(d, BIO_MON, BIO_RESPONSIBLE, "Biodiversity")
+
+resp_combined <- bind_rows(resp_hab, resp_bio)
+save_csv(resp_combined, "responsible_combined.csv")
 
 
 
