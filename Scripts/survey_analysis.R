@@ -33,6 +33,9 @@ HAB_METHODS <- "11. What methods are employed to collect data used to monitor ha
 HAB_CHALLENGES <- "9. What are the main challenges that prevent your organisation from carrying out formal habitat monitoring?Please select all that apply."
 BIO_CHALLENGES <- "35. What are the main challenges that prevent your organisation from carrying out formal biodiversity monitoring?Please select all that apply."
 
+HAB_REPORT_COL <- "38. How frequently are habitat monitoring data used in reports?"
+BIO_REPORT_COL <- "61. How frequently are biodiversity monitoring data used in reports?"
+
 OUTDIR <- "output"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
@@ -51,7 +54,7 @@ names(raw) <- names(raw) |>
 needed <- c(SECTOR_COL, HABITAT_MON, BIO_MON, PLAN_HAB, PLAN_BIO,
             HAB_FREQ, HAB_FREQ_OTHER, BIO_FREQ, BIO_FREQ_OTHER, 
             HAB_RESPONSIBLE, BIO_RESPONSIBLE, HAB_METHODS,
-            HAB_CHALLENGES, BIO_CHALLENGES)
+            HAB_CHALLENGES, BIO_CHALLENGES, HAB_REPORT_COL, BIO_REPORT_COL)
 missing <- setdiff(needed, names(raw))
 if (length(missing)) {
   stop("These columns were not found (after normalising headers):\n",
@@ -65,7 +68,7 @@ d <- raw %>%
       stringr::str_trim(stringr::str_replace_all(.data[[SECTOR_COL]], "\\s+", " "))
     )
   ) %>%
-  filter(stringr::str_detect(.sector_norm, "\\brailway\\b")) %>%  # keep any that include 'railway'
+  filter(stringr::str_detect(.sector_norm, "\\brailway\\b")) %>%  
   select(-.sector_norm)
 
 n_rail <- nrow(d)
@@ -75,9 +78,9 @@ message("N railway respondents: ", n_rail)
 clean_text <- function(x) {
   x |>
     as.character() |>
-    stringr::str_trim() |>                 # trim leading/trailing spaces
+    stringr::str_trim() |>                 
     stringr::str_replace_all("\\s+", " ") |>
-    stringr::str_replace_all("’", "'") |>  # normalise curly apostrophes
+    stringr::str_replace_all("’", "'") |>  
     stringr::str_to_lower()
 }
 
@@ -322,6 +325,44 @@ if (nrow(d_hab_yes) > 0) {
   methods_summary <- tibble(domain = "Habitat", methods = "no data", n = 0, pct = 0)
   save_csv(methods_summary, "methods_habitat.csv")
 }
+
+
+
+# Reporting 
+# summarise open-text
+summarise_reporting <- function(df, col, domain_label) {
+  if (nrow(df) == 0) {
+    return(tibble(domain = domain_label, category = "no data", n = 0, pct = 0))
+  }
+  
+  df %>%
+    select(report_text = all_of(col)) %>%
+    mutate(report_text = clean_text(report_text)) %>%
+    filter(!is.na(report_text) & report_text != "") %>%
+    mutate(category = case_when(
+      str_detect(report_text, "year|annual|anual") ~ "Annually",
+      str_detect(report_text, "project|require|report|use it in|all report|as per") ~ "As required / per project",
+      str_detect(report_text, "once|irregular") ~ "Once / irregular",
+      
+      TRUE ~ "Other / unclear"
+    )) %>%
+    count(category, name = "n") %>%
+    mutate(
+      pct = round(100 * n / sum(n), 1),
+      domain = domain_label
+    ) %>%
+    select(domain, category, n, pct)
+}
+
+report_habitat <- summarise_reporting(d, HAB_REPORT_COL, "Habitat")
+report_biodiversity <- summarise_reporting(d, BIO_REPORT_COL, "Biodiversity")
+
+report_summary <- bind_rows(report_habitat, report_biodiversity)
+save_csv(report_summary, "reporting_summary.csv")
+
+
+
+
 
 
 
