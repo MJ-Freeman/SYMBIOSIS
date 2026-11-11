@@ -36,6 +36,20 @@ BIO_CHALLENGES <- "35. What are the main challenges that prevent your organisati
 HAB_REPORT_COL <- "38. How frequently are habitat monitoring data used in reports?"
 BIO_REPORT_COL <- "61. How frequently are biodiversity monitoring data used in reports?"
 
+OBJ_HAB <- "29. Are the objectives of the habitat monitoring programme specific with clear targets or are they more general?"
+OBJ_BIO <- "57. Are the objectives of the biodiversity monitoring programme specific with clear targets, or are they more general?"
+
+HAB_RECIP <- "40. Who are the primary recipients of the reports?Please select all that apply."
+BIO_RECIP <- "63. Who are the primary recipients of the reports?Please select all that apply."
+
+HAB_INTEREST <- "41. Does your organisation demonstrate an increasing interest in including habitat monitoring data in the planning, management and reporting process?"
+BIO_INTEREST <- "64. Does your organisation demonstrate an increasing interest in including biodiversity monitoring data in their reporting?"
+
+HAB_STORAGE <- "30. How are habitat data stored and managed?"
+BIO_STORAGE <- "58. How is biodiversity data stored and managed?"
+HAB_AVAIL <- "31. Are habitat data available and used by multiple departments?"
+BIO_AVAIL <- "59. Are habitat data available and used by multiple departments?"
+
 OUTDIR <- "output"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
@@ -54,7 +68,9 @@ names(raw) <- names(raw) |>
 needed <- c(SECTOR_COL, HABITAT_MON, BIO_MON, PLAN_HAB, PLAN_BIO,
             HAB_FREQ, HAB_FREQ_OTHER, BIO_FREQ, BIO_FREQ_OTHER, 
             HAB_RESPONSIBLE, BIO_RESPONSIBLE, HAB_METHODS,
-            HAB_CHALLENGES, BIO_CHALLENGES, HAB_REPORT_COL, BIO_REPORT_COL)
+            HAB_CHALLENGES, BIO_CHALLENGES, HAB_REPORT_COL, BIO_REPORT_COL,
+            OBJ_HAB, OBJ_BIO, HAB_RECIP, BIO_RECIP, HAB_INTEREST, BIO_INTEREST,
+            HAB_STORAGE, BIO_STORAGE, HAB_AVAIL, BIO_AVAIL)
 missing <- setdiff(needed, names(raw))
 if (length(missing)) {
   stop("These columns were not found (after normalising headers):\n",
@@ -359,6 +375,207 @@ report_biodiversity <- summarise_reporting(d, BIO_REPORT_COL, "Biodiversity")
 
 report_summary <- bind_rows(report_habitat, report_biodiversity)
 save_csv(report_summary, "reporting_summary.csv")
+
+
+
+
+# Monitoring objectives
+d_hab_yes <- d %>% filter(yn_true(.data[[HABITAT_MON]]))
+
+if (nrow(d_hab_yes) > 0) {
+  obj_habitat <- d_hab_yes %>%
+    select(objectives = all_of(OBJ_HAB)) %>%
+    mutate(objectives = clean_text(objectives)) %>%
+    mutate(objectives = case_when(
+      str_detect(objectives, "specific") ~ "Specific",
+      str_detect(objectives, "general") ~ "General",
+      TRUE ~ "Unanswered"
+    )) %>%
+    count(objectives, name = "n") %>%
+    mutate(
+      pct = round(100 * n / nrow(d_hab_yes), 1),
+      domain = "Habitat"
+    ) %>%
+    select(domain, objectives, n, pct)
+  
+  save_csv(obj_habitat, "objectives_habitat.csv")
+} else {
+  obj_habitat <- tibble(domain = "Habitat", objectives = "no data", n = 0, pct = 0)
+  save_csv(obj_habitat, "objectives_habitat.csv")
+}
+
+d_bio_yes <- d %>% filter(yn_true(.data[[BIO_MON]]))
+
+if (nrow(d_bio_yes) > 0) {
+  obj_biodiversity <- d_bio_yes %>%
+    select(objectives = all_of(OBJ_BIO)) %>%
+    mutate(objectives = clean_text(objectives)) %>%
+    mutate(objectives = case_when(
+      str_detect(objectives, "specific") ~ "Specific",
+      str_detect(objectives, "general") ~ "General",
+      TRUE ~ "Unanswered"
+    )) %>%
+    count(objectives, name = "n") %>%
+    mutate(
+      pct = round(100 * n / nrow(d_bio_yes), 1),
+      domain = "Biodiversity"
+    ) %>%
+    select(domain, objectives, n, pct)
+  
+  save_csv(obj_biodiversity, "objectives_biodiversity.csv")
+} else {
+  obj_biodiversity <- tibble(domain = "Biodiversity", objectives = "no data", n = 0, pct = 0)
+  save_csv(obj_biodiversity, "objectives_biodiversity.csv")
+}
+
+
+objectives_summary <- bind_rows(obj_habitat, obj_biodiversity)
+save_csv(objectives_summary, "objectives_summary_railway.csv")
+
+
+
+
+# Report recipients 
+summarise_recipients <- function(df, col, domain_label) {
+  if (nrow(df) == 0) {
+    return(tibble(domain = domain_label, recipient = "no data", n = 0, pct = 0))
+  }
+  
+  df %>%
+    transmute(raw = clean_text(.data[[col]])) %>%
+    mutate(raw = if_else(is.na(raw), "", raw)) %>%
+    mutate(item = stringr::str_split(raw, "\\s*[;,/]|\\band\\b|&\\s*")) %>%
+    tidyr::unnest(item) %>%
+    mutate(item = stringr::str_trim(item),
+           item = stringr::str_to_lower(item),
+           recipient = case_when(
+             stringr::str_detect(item, "internal") ~ "Internal",
+             stringr::str_detect(item, "national") ~ "National government",
+             stringr::str_detect(item, "europe") | stringr::str_detect(item, "eu") ~ "European Union",
+             stringr::str_detect(item, "\\bpublic\\b") ~ "Public",
+             stringr::str_detect(item, "ngo|non[- ]?government") ~ "NGO",
+             stringr::str_detect(item, "other") ~ "Other",
+             item == "" ~ NA_character_,
+             TRUE ~ "Other"
+           )) %>%
+    filter(!is.na(recipient)) %>%         
+    count(recipient, name = "n") %>%
+    mutate(pct = round(100 * n / nrow(df), 1),
+           domain = domain_label) %>%
+    select(domain, recipient, n, pct)
+}
+
+recip_hab <- summarise_recipients(d, HAB_RECIP, "Habitat")
+recip_bio <- summarise_recipients(d, BIO_RECIP, "Biodiversity")
+
+recipients_combined <- bind_rows(recip_hab, recip_bio)
+
+save_csv(recipients_combined, "recipients_of_reports_railway.csv")
+
+
+# Interest in including monitoring data in planning, management and reporting
+clean_interest <- function(x) {
+  x_clean <- x %>%
+    as.character() %>%
+    stringr::str_to_lower() %>%
+    stringr::str_replace_all("’", "'") %>%   
+    stringr::str_replace_all("\\s+", " ") %>%
+    stringr::str_trim()
+  
+  dplyr::case_when(
+    stringr::str_detect(x_clean, "\\byes\\b") ~ "Yes",
+    stringr::str_detect(x_clean, "\\bno\\b")  ~ "No",
+    stringr::str_detect(x_clean, "don\\'t|dont|do not|do n't|do not know|i don") ~ "I don't know",
+    TRUE ~ NA_character_
+  )
+}
+
+d <- d %>%
+  mutate(
+    hab_interest_clean = clean_interest(.data[[HAB_INTEREST]]),
+    bio_interest_clean = clean_interest(.data[[BIO_INTEREST]])
+  )
+
+summarise_interest <- function(df, col, domain_label, group_label) {
+  df_clean <- df %>% filter(!is.na(.data[[col]]))
+  n_total <- nrow(df_clean)
+  if (n_total == 0) {
+    return(tibble(domain = domain_label, group = group_label, response = "no data", n = 0, pct = 0, n_total = 0))
+  }
+  df_clean %>%
+    count(response = .data[[col]], name = "n") %>%
+    mutate(
+      pct = round(100 * n / n_total, 1),
+      group = group_label,
+      domain = domain_label,
+      n_total = n_total
+    ) %>%
+    select(domain, group, response, n, pct, n_total)
+}
+
+d_rail <- d %>% filter(.data[[SECTOR_COL]] == SECTOR_VALUE)
+
+interest_hab_rail <- summarise_interest(d_rail, "hab_interest_clean", "Habitat", "Railway respondents")
+interest_bio_rail <- summarise_interest(d_rail, "bio_interest_clean", "Biodiversity", "Railway respondents")
+
+interest_hab_all <- summarise_interest(d, "hab_interest_clean", "Habitat", "All respondents")
+interest_bio_all <- summarise_interest(d, "bio_interest_clean", "Biodiversity", "All respondents")
+
+interest_combined <- bind_rows(
+  interest_hab_rail, interest_bio_rail,
+  interest_hab_all, interest_bio_all
+)
+
+interest_diff <- interest_combined %>%
+  select(domain, group, response, pct) %>%
+  pivot_wider(names_from = group, values_from = pct) %>%
+  mutate(
+    diff_pct_points = round(`Railway respondents` - `All respondents`, 1)
+  ) %>%
+  left_join(
+    interest_combined %>% filter(group == "Railway respondents") %>% select(domain, response, n_total_rail = n_total),
+    by = c("domain", "response")
+  ) %>%
+  left_join(
+    interest_combined %>% filter(group == "All respondents") %>% select(domain, response, n_total_all = n_total),
+    by = c("domain", "response")
+  ) %>%
+  relocate(domain, response, .before = 1)
+
+save_csv(interest_combined, "interest_habitat_biodiversity_summary.csv")
+save_csv(interest_diff, "interest_habitat_biodiversity_difference.csv")
+
+
+
+# Data storage & management
+summarise_simple_choice <- function(df, col, domain_label, question_label) {
+  df %>%
+    mutate(response = clean_text(.data[[col]])) %>%
+    filter(!is.na(response) & response != "") %>%        # ← Exclude missing
+    count(response, name = "n") %>%
+    mutate(pct = round(100 * n / sum(n), 1),
+           domain = domain_label,
+           question = question_label,
+           n_total = sum(n)) %>%
+    select(domain, question, response, n, pct, n_total)
+}
+  
+storage_hab <- summarise_simple_choice(d, HAB_STORAGE, "Habitat", "Data storage and management")
+storage_bio <- summarise_simple_choice(d, BIO_STORAGE, "Biodiversity", "Data storage and management")
+storage_summary <- bind_rows(storage_hab, storage_bio)
+
+avail_hab <- summarise_simple_choice(d, HAB_AVAIL, "Habitat", "Data availability and use")
+avail_bio <- summarise_simple_choice(d, BIO_AVAIL, "Biodiversity", "Data availability and use")
+avail_summary <- bind_rows(avail_hab, avail_bio)
+
+save_csv(storage_summary, "data_storage_management_railway.csv")
+save_csv(avail_summary, "data_availability_use_railway.csv")
+
+
+
+
+
+
 
 
 
